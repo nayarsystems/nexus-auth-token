@@ -12,10 +12,8 @@ import (
 )
 
 var opts struct {
-	Host   string `short:"s" long:"server" default:"ws://localhost:8088" description:"Nexus server"`
-	Prefix string `short:"p" description:"Nexus prefix to pull" default:"sys.login.token"`
-	User   string `long:"user" description:"Nexus username" required:"true"`
-	Pass   string `long:"pass" description:"Nexus password" required:"true"`
+	Config     string `short:"c" default:"config.json" description:"nexus config file"`
+	Production bool   `long:"production" default:"false" description:"Log as json"`
 
 	Rethink RethinkOptions `group:"RethinkDB Options"`
 }
@@ -114,13 +112,17 @@ func main() {
 	}
 	log.Println("DB Opened")
 
-	srv := nxsugar.NewService(opts.Host, "sys.login.token", &nxsugar.ServiceOpts{Pulls: 10})
+	nxsugar.SetFlagsEnabled(false)
+	nxsugar.SetConfigFile(opts.Config)
+	nxsugar.SetProductionMode(opts.Production)
+	srv, err := nxsugar.NewServiceFromConfig("token-auth")
+	if err != nil {
+		log.Fatalln(err)
+	}
 	srv.AddMethod("login", loginHandler)
 	srv.AddMethod("otp", otpHandler)
 	srv.AddMethod("create", createHandler)
 	srv.AddMethod("consume", consumeHandler)
-	srv.SetUser(opts.User)
-	srv.SetPass(opts.Pass)
 
 	err = srv.Serve()
 	if err != nil {
