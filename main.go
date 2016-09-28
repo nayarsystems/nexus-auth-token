@@ -7,9 +7,8 @@ import (
 
 	r "github.com/dancannon/gorethink"
 	"github.com/jaracil/ei"
-	"github.com/jaracil/nxcli/demos/go/sugar"
-	"github.com/jaracil/nxcli/nxcore"
 	"github.com/jessevdk/go-flags"
+	"github.com/nayarsystems/nxsugar-go"
 )
 
 var opts struct {
@@ -115,7 +114,7 @@ func main() {
 	}
 	log.Println("DB Opened")
 
-	srv := sugar.NewService(opts.Host, "sys.login.token", &sugar.ServiceOpts{Pulls: 10})
+	srv := nxsugar.NewService(opts.Host, "sys.login.token", &nxsugar.ServiceOpts{Pulls: 10})
 	srv.AddMethod("login", loginHandler)
 	srv.AddMethod("otp", otpHandler)
 	srv.AddMethod("create", createHandler)
@@ -134,7 +133,7 @@ type LoginResponse struct {
 	Tags map[string]map[string]interface{}
 }
 
-func loginHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
+func loginHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 
 	token := ei.N(task.Params).M("token").StringZ()
 
@@ -149,17 +148,17 @@ func loginHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
 		RunWrite(db)
 	if err != nil {
 		log.Println("Error:", err)
-		return nil, &nxcore.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
 	}
 
 	if len(ret.Changes) != 1 {
-		return nil, &nxcore.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
 	}
 
 	return ret.Changes[0].NewValue, nil
 }
 
-func otpHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
+func otpHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	log.Println("Creating OTP for", task.User)
 
 	ret, err := r.Table("tokens").Insert(ei.M{"user": task.User, "ttl": 1, "deadline": r.Now().Add(3600)}).
@@ -168,10 +167,10 @@ func otpHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
 		return ret.GeneratedKeys[0], nil
 	}
 
-	return nil, &nxcore.JsonRpcErr{Cod: 3, Mess: err.Error()}
+	return nil, &nxsugar.JsonRpcErr{Cod: 3, Mess: err.Error()}
 }
 
-func createHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
+func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 
 	ttl := ei.N(task.Params).M("ttl").IntZ()
 	if ttl == 0 {
@@ -180,18 +179,18 @@ func createHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
 
 	deadline, err := ei.N(task.Params).M("deadline").Time()
 	if err != nil {
-		return nil, &nxcore.JsonRpcErr{Cod: 5, Mess: "Deadline conversion error"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 5, Mess: "Deadline conversion error"}
 	}
 
 	cur, err := r.Expr(r.Now()).Run(db)
 	if err != nil {
 		log.Println("Error:", err)
-		return nil, &nxcore.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
 	}
 	var t time.Time
 	cur.One(&t)
 	if deadline.Before(t) {
-		return nil, &nxcore.JsonRpcErr{Cod: 4, Mess: "Deadline is in the past"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 4, Mess: "Deadline is in the past"}
 	}
 
 	ret, err := r.Table("tokens").Insert(ei.M{"user": task.User, "ttl": ttl, "deadline": deadline}).RunWrite(db)
@@ -201,21 +200,21 @@ func createHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
 		return ret.GeneratedKeys[0], nil
 	}
 
-	return nil, &nxcore.JsonRpcErr{Cod: 3, Mess: err.Error()}
+	return nil, &nxsugar.JsonRpcErr{Cod: 3, Mess: err.Error()}
 }
 
-func consumeHandler(task *nxcore.Task) (interface{}, *nxcore.JsonRpcErr) {
+func consumeHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 
 	token, err := ei.N(task.Params).M("token").String()
 	if err != nil {
-		return nil, &nxcore.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
 	}
 
 	ret, err := r.Table("tokens").Get(token).
 		Update(ei.M{"ttl": 0}, r.UpdateOpts{ReturnChanges: true}).RunWrite(db)
 
 	if len(ret.Changes) != 1 {
-		return nil, &nxcore.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
+		return nil, &nxsugar.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
 	}
 
 	return ret.Changes[0].NewValue, nil
