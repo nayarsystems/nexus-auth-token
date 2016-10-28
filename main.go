@@ -13,7 +13,7 @@ import (
 
 var opts struct {
 	Config     string `short:"c" default:"config.json" description:"nexus config file"`
-	Production bool   `long:"production" default:"false" description:"Log as json"`
+	Production bool   `long:"production" description:"Log as json"`
 
 	Rethink RethinkOptions `group:"RethinkDB Options"`
 }
