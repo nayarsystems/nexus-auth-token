@@ -19,7 +19,7 @@ var opts struct {
 }
 
 type RethinkOptions struct {
-	Host     string `short:"r" long:"rethinkdb" description:"RethinkDB host[:port]" default:"localhost:28015"`
+	Host     []string `short:"r" long:"rethinkdb" description:"RethinkDB host[:port]" default:"localhost:28015"`
 	Database string `long:"db" description:"RethinkDB database" default:"nexusTokenAuth"`
 	User     string `long:"ruser" description:"RethinkDB username" default:""`
 	Pass     string `long:"rpass" description:"RethinkDB password" default:""`
@@ -29,7 +29,7 @@ var db *r.Session
 
 func dbOpen() (err error) {
 	db, err = r.Connect(r.ConnectOpts{
-		Address:  opts.Rethink.Host,
+		Addresses:  opts.Rethink.Host,
 		Database: opts.Rethink.Database,
 		MaxIdle:  50,
 		MaxOpen:  200,

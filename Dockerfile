@@ -11,4 +11,6 @@ RUN apk update &&\
 	apk del go git mercurial &&\
 	rm -fr /go
 
+RUN apk update && apk add ca-certificates
+
 ENTRYPOINT ["/nexus-auth-token"]
