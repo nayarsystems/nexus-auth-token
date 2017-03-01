@@ -1,0 +1,16 @@
+{
+	"server": {
+		"url": "nexus:1717",
+		"user": "root",
+		"pass": "root",
+		"log-level": "debug",
+		"testing": true
+	},
+	"services": {
+		"token-auth": {
+			"path": "sys.login.token",
+			"pulls": 10,
+			"max-threads": 60
+		}
+	}
+}
