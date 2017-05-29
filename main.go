@@ -195,11 +195,11 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		return nil, &nxsugar.JsonRpcErr{Cod: 4, Mess: "Deadline is in the past"}
 	}
 
-	user := ""
+	user := task.User
 	userToImpersonate := ei.N(task.Params).M("user_to_impersonate").StringZ()
 
 	if userToImpersonate != "" {
-		response, err := task.GetConn().UserGetEffectiveTags(task.User, userToImpersonate)
+		response, err := task.GetConn().UserGetEffectiveTags(user, userToImpersonate)
 		if err != nil {
 			log.Println("Error:", err)
 		}
@@ -213,11 +213,9 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		}
 		if tagValues["@admin"] == true {
 			user = userToImpersonate
+		} else {
+			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
 		}
-	}
-
-	if user == "" {
-		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
 	}
 
 	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline}).RunWrite(db)
