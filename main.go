@@ -201,20 +201,16 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	if userToImpersonate != "" {
 		response, err := task.GetConn().UserGetEffectiveTags(user, userToImpersonate)
 		if err != nil {
-			log.Println("Error:", err)
+			return nil, &nxsugar.JsonRpcErr{Cod: 3, Mess: err.Error()}
 		}
-		tags, ok := response.(map[string]interface{})
-		if !ok {
-			log.Println("Error, unable to parse tag values: ", ok)
+		isAdmin, err := ei.N(response).M("tags").M("@admin").Bool()
+		if err != nil {
+			return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
 		}
-		tagValues, ok := tags["tags"].(map[string]interface{})
-		if !ok {
-			log.Println("Error, unable to parse tag values: ", ok)
-		}
-		if tagValues["@admin"] == true {
+		if isAdmin == true {
 			user = userToImpersonate
 		} else {
-			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
+			return nil, &nxsugar.JsonRpcErr{Cod: 6, Mess: "Insufficient Permissions"}
 		}
 	}
 
