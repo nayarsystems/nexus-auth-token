@@ -20,21 +20,21 @@ var opts struct {
 
 type RethinkOptions struct {
 	Host     []string `short:"r" long:"rethinkdb" description:"RethinkDB host[:port]" default:"localhost:28015"`
-	Database string `long:"db" description:"RethinkDB database" default:"nexusTokenAuth"`
-	User     string `long:"ruser" description:"RethinkDB username" default:""`
-	Pass     string `long:"rpass" description:"RethinkDB password" default:""`
+	Database string   `long:"db" description:"RethinkDB database" default:"nexusTokenAuth"`
+	User     string   `long:"ruser" description:"RethinkDB username" default:""`
+	Pass     string   `long:"rpass" description:"RethinkDB password" default:""`
 }
 
 var db *r.Session
 
 func dbOpen() (err error) {
 	db, err = r.Connect(r.ConnectOpts{
-		Addresses:  opts.Rethink.Host,
-		Database: opts.Rethink.Database,
-		MaxIdle:  50,
-		MaxOpen:  200,
-		Username: opts.Rethink.User,
-		Password: opts.Rethink.Pass,
+		Addresses: opts.Rethink.Host,
+		Database:  opts.Rethink.Database,
+		MaxIdle:   50,
+		MaxOpen:   200,
+		Username:  opts.Rethink.User,
+		Password:  opts.Rethink.Pass,
 	})
 	return
 }
@@ -195,9 +195,34 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		return nil, &nxsugar.JsonRpcErr{Cod: 4, Mess: "Deadline is in the past"}
 	}
 
-	ret, err := r.Table("tokens").Insert(ei.M{"user": task.User, "ttl": ttl, "deadline": deadline}).RunWrite(db)
+	user := ""
+	userToImpersonate := ei.N(task.Params).M("user_to_impersonate").StringZ()
+
+	if userToImpersonate != "" {
+		response, err := task.GetConn().UserGetEffectiveTags(task.User, userToImpersonate)
+		if err != nil {
+			log.Println("Error:", err)
+		}
+		tags, ok := response.(map[string]interface{})
+		if !ok {
+			log.Println("Error, unable to parse tag values: ", ok)
+		}
+		tagValues, ok := tags["tags"].(map[string]interface{})
+		if !ok {
+			log.Println("Error, unable to parse tag values: ", ok)
+		}
+		if tagValues["@admin"] == true {
+			user = userToImpersonate
+		}
+	}
+
+	if user == "" {
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
+	}
+
+	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline}).RunWrite(db)
 	if err == nil && len(ret.GeneratedKeys) > 0 {
-		log.Println("Creating token for", task.User)
+		log.Println("Creating token for", user)
 
 		return ret.GeneratedKeys[0], nil
 	}
