@@ -4,7 +4,7 @@ ENV GOPATH /go/
 ADD . /go/src/github.com/nayarsystems/nexus-auth-token
 
 RUN apk update &&\
-	apk add go git mercurial &&\
+	apk add go git mercurial libc-dev &&\
 	cd /go/src/github.com/nayarsystems/nexus-auth-token &&\
 	go get &&\
 	go build -o /nexus-auth-token &&\
