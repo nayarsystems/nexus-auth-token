@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"time"
@@ -25,7 +26,10 @@ type RethinkOptions struct {
 	Pass     string   `long:"rpass" description:"RethinkDB password" default:""`
 }
 
-var db *r.Session
+var (
+	db  *r.Session
+	srv *nxsugar.Service
+)
 
 func dbOpen() (err error) {
 	db, err = r.Connect(r.ConnectOpts{
@@ -115,7 +119,7 @@ func main() {
 	nxsugar.SetFlagsEnabled(false)
 	nxsugar.SetConfigFile(opts.Config)
 	nxsugar.SetProductionMode(opts.Production)
-	srv, err := nxsugar.NewServiceFromConfig("token-auth")
+	srv, err = nxsugar.NewServiceFromConfig("token-auth")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -123,6 +127,11 @@ func main() {
 	srv.AddMethod("otp", otpHandler)
 	srv.AddMethod("create", createHandler)
 	srv.AddMethod("consume", consumeHandler)
+	srv.AddMethod("list", listHandler)
+	srv.AddMethod("info", infoHandler)
+	srv.AddMethod("clear", clearHandler)
+
+	go deleteExpiredTokensDaily()
 
 	err = srv.Serve()
 	if err != nil {
@@ -150,7 +159,7 @@ func loginHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		RunWrite(db)
 	if err != nil {
 		log.Println("Error:", err)
-		return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 	}
 
 	if len(ret.Changes) != 1 {
@@ -187,7 +196,7 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	cur, err := r.Expr(r.Now()).Run(db)
 	if err != nil {
 		log.Println("Error:", err)
-		return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 	}
 	var t time.Time
 	cur.One(&t)
@@ -205,16 +214,16 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		}
 		isAdmin, err := ei.N(response).M("tags").M("@admin").Bool()
 		if err != nil {
-			return nil, &nxsugar.JsonRpcErr{Cod: 1, Mess: "Internal Error"}
+			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 		}
 		if isAdmin == true {
 			user = userToImpersonate
 		} else {
-			return nil, &nxsugar.JsonRpcErr{Cod: 6, Mess: "Insufficient Permissions"}
+			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrPermissionDenied}
 		}
 	}
 
-	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline}).RunWrite(db)
+	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline, "metadata": ei.N(task.Params).M("metadata").RawZ()}).RunWrite(db)
 	if err == nil && len(ret.GeneratedKeys) > 0 {
 		log.Println("Creating token for", user)
 
@@ -232,11 +241,126 @@ func consumeHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	}
 
 	ret, err := r.Table("tokens").Get(token).
-		Update(ei.M{"ttl": 0}, r.UpdateOpts{ReturnChanges: true}).RunWrite(db)
+		Delete(r.DeleteOpts{ReturnChanges: true}).RunWrite(db)
 
 	if len(ret.Changes) != 1 {
 		return nil, &nxsugar.JsonRpcErr{Cod: 2, Mess: "Invalid token"}
 	}
 
 	return ret.Changes[0].NewValue, nil
+}
+
+func listHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
+
+	user := task.User
+	stmt := r.Table("tokens")
+
+	if path := ei.N(task.Params).M("path").StringZ(); path != "" {
+		tags, err := task.GetConn().UserGetEffectiveTags(user, path)
+		if err != nil {
+			log.Println("Error: ", err)
+			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrPermissionDenied}
+		}
+
+		if ei.N(tags).M("tags").M("@admin").BoolZ() || ei.N(tags).M("tags").M("@token.list").BoolZ() {
+			stmt = stmt.Filter(r.Row.Field("user").Eq(path).Or(r.Row.Field("user").Match("^" + path + ".")))
+		} else {
+			return nil, nil
+		}
+	} else {
+		stmt = stmt.Filter(r.Row.Field("user").Eq(user))
+	}
+
+	res, err := stmt.Run(db)
+	if err != nil {
+		log.Println("Error: ", err)
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+	defer res.Close()
+	var tokens []interface{}
+	if err := res.All(&tokens); err != nil {
+		log.Println("Error2: err")
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+
+	return tokens, nil
+}
+
+func infoHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
+	ids := ei.N(task.Params).M("ids").SliceZ()
+
+	res, err := r.Table("tokens").
+		GetAll(ids...).Run(db)
+	if err != nil {
+		log.Println("Error: ", err)
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+	defer res.Close()
+
+	var tokensInfo []interface{}
+	if err := res.All(&tokensInfo); err != nil {
+		log.Println("Error2: ", err)
+		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+
+	user := task.User
+
+	for _, token := range tokensInfo {
+		path := ei.N(token).M("user").StringZ()
+		if path != user {
+			tags, err := task.GetConn().UserGetEffectiveTags(user, path)
+			if err != nil {
+				log.Println("Error3: ", err)
+				return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
+			}
+			if !ei.N(tags).M("tags").M("@admin").BoolZ() && !ei.N(tags).M("tags").M("@token.list").BoolZ() {
+				log.Println("Error4: ", err)
+				return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
+			}
+		}
+	}
+
+	return tokensInfo, nil
+}
+
+func ParseParams(params, dest interface{}) error {
+	marshalled, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(marshalled, dest)
+	return err
+}
+
+func clearHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
+	return deleteExpiredTokens()
+}
+
+func deleteExpiredTokensDaily() {
+	t := time.NewTicker(24 * time.Hour)
+	for range t.C {
+		deleteExpiredTokens()
+	}
+}
+
+func deleteExpiredTokens() (int, *nxsugar.JsonRpcErr) {
+	countTokensDeleted := 0
+	ret, err := r.Table("tokens").Filter(r.Row.Field("ttl").Eq(0)).Delete(r.DeleteOpts{ReturnChanges: true}).RunWrite(db)
+	if err != nil {
+		srv.Log(nxsugar.ErrorLevel, "Error deleting tokens with ttl=0. %v", err)
+		return 0, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+	countTokensDeleted += len(ret.Changes)
+	srv.Log(nxsugar.ErrorLevel, "Tokens with no more ttl deleted: %v", countTokensDeleted)
+
+	ret, err = r.Table("tokens").
+		Filter(r.Row.Field("deadline").Lt(r.Now())).
+		Delete(r.DeleteOpts{ReturnChanges: true}).RunWrite(db)
+	if err != nil {
+		srv.Log(nxsugar.ErrorLevel, "Error deleting tokens with ttl=0. %v", err)
+		return 0, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
+	}
+	countTokensDeleted += len(ret.Changes)
+	srv.Log(nxsugar.ErrorLevel, "Tokens expired deleted: %v", countTokensDeleted)
+	return countTokensDeleted, nil
 }
