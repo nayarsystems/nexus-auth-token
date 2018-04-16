@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"os"
 	"time"
@@ -223,7 +222,8 @@ func createHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		}
 	}
 
-	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline, "metadata": ei.N(task.Params).M("metadata").RawZ()}).RunWrite(db)
+	metadata := ei.N(task.Params).M("metadata").RawZ()
+	ret, err := r.Table("tokens").Insert(ei.M{"user": user, "ttl": ttl, "deadline": deadline, "metadata": metadata}).RunWrite(db)
 	if err == nil && len(ret.GeneratedKeys) > 0 {
 		log.Println("Creating token for", user)
 
@@ -262,8 +262,8 @@ func listHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 			return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrPermissionDenied}
 		}
 
-		if ei.N(tags).M("tags").M("@admin").BoolZ() || ei.N(tags).M("tags").M("@token.list").BoolZ() {
-			stmt = stmt.Filter(r.Row.Field("user").Eq(path).Or(r.Row.Field("user").Match("^" + path + ".")))
+		if ei.N(tags).M("tags").M("@admin").BoolZ() || ei.N(tags).M("tags").M("@sys.login.token.list").BoolZ() {
+			stmt = stmt.Filter(r.Row.Field("user").Match("^" + path + "($|.)"))
 		} else {
 			return nil, nil
 		}
@@ -323,15 +323,6 @@ func infoHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	return tokensInfo, nil
 }
 
-func ParseParams(params, dest interface{}) error {
-	marshalled, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
-	err = json.Unmarshal(marshalled, dest)
-	return err
-}
-
 func clearHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	return deleteExpiredTokens()
 }
@@ -357,7 +348,7 @@ func deleteExpiredTokens() (int, *nxsugar.JsonRpcErr) {
 		Filter(r.Row.Field("deadline").Lt(r.Now())).
 		Delete(r.DeleteOpts{ReturnChanges: true}).RunWrite(db)
 	if err != nil {
-		srv.Log(nxsugar.ErrorLevel, "Error deleting tokens with ttl=0. %v", err)
+		srv.Log(nxsugar.ErrorLevel, "Error deleting expired tokens. %v", err)
 		return 0, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 	}
 	countTokensDeleted += len(ret.Changes)
