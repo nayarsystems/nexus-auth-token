@@ -279,7 +279,7 @@ func listHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 	defer res.Close()
 	var tokens []interface{}
 	if err := res.All(&tokens); err != nil {
-		log.Println("Error2: err")
+		log.Println("Error getting query results: ", err)
 		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 	}
 
@@ -299,7 +299,7 @@ func infoHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 
 	var tokensInfo []interface{}
 	if err := res.All(&tokensInfo); err != nil {
-		log.Println("Error2: ", err)
+		log.Println("Error getting query results: ", err)
 		return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInternal}
 	}
 
@@ -310,11 +310,11 @@ func infoHandler(task *nxsugar.Task) (interface{}, *nxsugar.JsonRpcErr) {
 		if path != user {
 			tags, err := task.GetConn().UserGetEffectiveTags(user, path)
 			if err != nil {
-				log.Println("Error3: ", err)
+				log.Println("Error getting effective tags: ", err)
 				return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
 			}
 			if !ei.N(tags).M("tags").M("@admin").BoolZ() && !ei.N(tags).M("tags").M("@token.list").BoolZ() {
-				log.Println("Error4: ", err)
+				log.Println("Error parsing tags: ", err)
 				return nil, &nxsugar.JsonRpcErr{Cod: nxsugar.ErrInvalidParams}
 			}
 		}
