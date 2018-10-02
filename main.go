@@ -5,10 +5,10 @@ import (
 	"os"
 	"time"
 
-	r "github.com/dancannon/gorethink"
 	"github.com/jaracil/ei"
 	"github.com/jessevdk/go-flags"
 	"github.com/nayarsystems/nxsugar-go"
+	r "gopkg.in/rethinkdb/rethinkdb-go.v3"
 )
 
 var opts struct {
@@ -103,18 +103,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = dbOpen()
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	err = dbBootstrap()
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	log.Println("DB Opened")
-
 	nxsugar.SetFlagsEnabled(false)
 	nxsugar.SetConfigFile(opts.Config)
 	nxsugar.SetProductionMode(opts.Production)
@@ -129,6 +117,32 @@ func main() {
 	srv.AddMethod("list", listHandler)
 	srv.AddMethod("info", infoHandler)
 	srv.AddMethod("clear", clearHandler)
+
+	config, _ := nxsugar.GetConfig()
+	if rthHost, err := ei.N(config).M("services").M("token-auth").M("rethinkdb").String(); err == nil {
+		opts.Rethink.Host = []string{rthHost}
+	}
+	if rthDB, err := ei.N(config).M("services").M("token-auth").M("db").String(); err == nil {
+		opts.Rethink.Database = rthDB
+	}
+	if rthUser, err := ei.N(config).M("services").M("token-auth").M("ruser").String(); err == nil {
+		opts.Rethink.User = rthUser
+	}
+	if rthPass, err := ei.N(config).M("services").M("token-auth").M("rpass").String(); err == nil {
+		opts.Rethink.Pass = rthPass
+	}
+
+	err = dbOpen()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	err = dbBootstrap()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	log.Println("DB Opened")
 
 	go deleteExpiredTokensDaily()
 
